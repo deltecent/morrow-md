@@ -1,0 +1,376 @@
+
+
+                ;
+                ;  PCGET - This CP/M program receives a file from a PC via a serial 
+                ;  port and writes it to a file on the CP/M system. The file transfer uses
+                ;  the XMODEM protocol. 
+                ;
+                ;  Note this program is gutted from the Ward Christenson Modem program.
+                ;
+                ;  Hacked together by Mike Douglas for the Altair 2SIO serial interface board.
+                ;  Modified for Morrow Micro-Decision Models MD2 and MD3 by Patrick Linstruth.
+                ;	Ver	Date	Desc
+                ;	1.0    11/17/21	Initial version
+                ;
+                ;  Serial Port Equates
+                
+ 00FD =         SIOACR	EQU	0FDh		;console port - control register
+ 00FC =         SIOADR	EQU	0FCh		;console port - data register
+ 00FF =         SIOBCR	EQU	0FFh		;2nd port - control register
+ 00FE =         SIOBDR	EQU	0FEh		;2nd port - data register
+                
+ 0001 =         XMTMASK	EQU	1		;MASK TO ISOLATE XMIT READY BIT
+ 0001 =         XMTRDY	EQU	1		;VALUE WHEN READY
+ 0002 =         RCVMASK	EQU	2		;MASK TO ISOLATE RECEIVE READY BIT
+ 0002 =         RCVRDY	EQU	2		;BIT ON WHEN READY
+                
+                ;  Transfer related equates
+                
+ 0001 =         SOH	EQU	1
+ 0004 =         EOT	EQU	4
+ 0006 =         ACK	EQU	6
+ 0015 =         NAK	EQU	15H
+ 0003 =         CTRLC	EQU	3		;Control-C
+ 000A =         LF	EQU	10
+ 000D =         CR	EQU	13
+                
+ 0100           	ORG	100H
+                
+                ;  Verify a file name was specified
+                
+ 0100 3A5D00    	lda	PARAM1		;A=1st character of parameter 1
+ 0103 FE20      	cpi	' '		;make sure something entered
+ 0105 C21101    	jnz	havep1
+ 0108 115D03    	lxi	d,mHelp		;display usage message
+ 010B 0E09      	mvi	c,print
+ 010D CD0500    	call	bdos
+ 0110 C9        	ret			;return to CPM
+                
+                ;  See if port "B" specified (2nd parameter)
+                
+ 0111 0600      havep1	mvi	b,0		;assume port b not used
+ 0113 110B03    	lxi	d,mSendA	;port a send message
+ 0116 3A6D00    	lda	PARAM2		;A=1st character of parameter 2
+ 0119 E65F      	ani	5fh		;force upper case
+ 011B FE42      	cpi	'B'		;port b specified?
+ 011D C22401    	jnz	doXfer		;no, go do the transfer
+ 0120 04        	inr	b		;force flag to non-zero value
+ 0121 112D03    	lxi	d,mSendB	;port b send message
+                	
+                ;  doXfer - Switch to local stack and do the transfer
+                
+ 0124 78        doXfer	mov	a,b		;store the port b flag
+ 0125 323604    	sta	fPortB
+ 0128 210000    	LXI	H,0		;HL=0
+ 012B 39        	DAD	SP		;HL=STACK FROM CP/M
+ 012C 223204    	SHLD	STACK		;..SAVE IT
+ 012F 313204    	LXI	SP,STACK	;SP=MY STACK
+ 0132 AF        	xra	a
+ 0133 323504    	sta	SECTNO		;init sector number to zero
+ 0136 0E09      	MVI	C,PRINT		;print the send message
+ 0138 CD0500    	CALL	BDOS		;PRINT ID MESSAGE
+                
+                ;  GOBBLE UP GARBAGE CHARS FROM THE LINE
+                
+ 013B 0601      purge	MVI	B,1		;times out after 1 second if no data
+ 013D CD8B02    	CALL	RECV
+ 0140 DA4B01    	jc	RECEIVE$FILE	;line is clear, go receive the file
+ 0143 FE03      	cpi	ctrlc		;exit if abort requested
+ 0145 CAF103    	jz	abort
+ 0148 C33B01    	jmp	purge
+                ;
+                ;**************RECEIVE FILE****************
+                ;
+                RECEIVE$FILE:
+ 014B CD2902    	CALL	ERASE$OLD$FILE
+ 014E CD3C02    	CALL	MAKE$NEW$FILE
+ 0151 3E15      	MVI	A,NAK
+ 0153 CDE702    	CALL	SEND		;SEND NAK
+                
+                RECV$LOOP:
+                RECV$HDR:
+ 0156 0603      	MVI	B,3		;3 SEC TIMEOUT
+ 0158 CD8B02    	CALL	RECV
+ 015B D26E01    	JNC	RHNTO		;NO TIMEOUT
+                
+                RECV$HDR$TIMEOUT:
+                RECV$SECT$ERR:			;PURGE THE LINE OF INPUT CHARS
+ 015E 0601      	MVI	B,1		;1 SEC W/NO CHARS
+ 0160 CD8B02    	CALL	RECV
+ 0163 D25E01    	JNC	RECV$SECT$ERR 	;LOOP UNTIL SENDER DONE
+ 0166 3E15      	MVI	A,NAK
+ 0168 CDE702    	CALL	SEND		;SEND NAK
+ 016B C35601    	JMP	RECV$HDR
+                
+                ;GOT CHAR - MUST BE SOH OR CTRL-C TO ABORT
+                
+ 016E FE01      RHNTO:	CPI	SOH
+ 0170 CA8001    	JZ	GOT$SOH
+ 0173 FE03      	cpi	ctrlc		;control-c to abort?
+ 0175 CAF103    	jz	abort
+ 0178 FE04      	CPI	EOT
+ 017A CAFD01    	JZ	GOT$EOT
+ 017D C35E01    	JMP	RECV$SECT$ERR
+                
+                GOT$SOH:
+ 0180 0601      	MVI	B,1
+ 0182 CD8B02    	CALL	RECV
+ 0185 DA5E01    	JC	RECV$HDR$TIMEOUT
+ 0188 57        	MOV	D,A		;D=BLK #
+ 0189 0601      	MVI	B,1
+ 018B CD8B02    	CALL	RECV		;GET CMA'D SECT #
+ 018E DA5E01    	JC	RECV$HDR$TIMEOUT
+ 0191 2F        	CMA
+ 0192 BA        	CMP	D		;GOOD SECTOR #?
+ 0193 CA9901    	JZ	RECV$SECTOR
+ 0196 C35E01    	JMP	RECV$SECT$ERR
+                
+                ;  Receive Sector
+                
+                RECV$SECTOR:
+ 0199 7A        	MOV	A,D		;GET SECTOR #
+ 019A 323404    	STA	RSECTNO
+ 019D 0E00      	MVI	C,0		;INIT CKSUM
+ 019F 218000    	LXI	H,80H		;POINT TO BUFFER
+                RECV$CHAR:
+ 01A2 0601      	MVI	B,1		;1 SEC TIMEOUT
+ 01A4 CD8B02    	CALL	RECV		;GET CHAR
+ 01A7 DA5E01    	JC	RECV$HDR$TIMEOUT
+ 01AA 77        	MOV	M,A		;STORE CHAR
+ 01AB 2C        	INR	L		;DONE?
+ 01AC C2A201    	JNZ	RECV$CHAR
+                
+                ;VERIFY CHECKSUM
+                
+ 01AF 51        	MOV	D,C		;SAVE CHECKSUM
+ 01B0 0601      	MVI	B,1		;TIMEOUT
+ 01B2 CD8B02    	CALL	RECV		;GET CHECKSUM
+ 01B5 DA5E01    	JC	RECV$HDR$TIMEOUT
+ 01B8 BA        	CMP	D		;CHECK
+ 01B9 C25E01    	JNZ	RECV$SECT$ERR
+                ;
+                ;GOT A SECTOR, WRITE IF = 1+PREV SECTOR
+                ;
+ 01BC 3A3404    	LDA	RSECTNO
+ 01BF 47        	MOV	B,A		;SAVE IT
+ 01C0 3A3504    	LDA	SECTNO		;GET PREV
+ 01C3 3C        	INR	A		;CALC NEXT SECTOR #
+ 01C4 B8        	CMP	B		;MATCH?
+ 01C5 C2DA01    	JNZ	DO$ACK
+                
+                ;GOT NEW SECTOR - WRITE IT
+                
+ 01C8 115C00    	LXI	D,FCB
+ 01CB 0E15      	MVI	C,WRITE
+ 01CD CD0500    	CALL	BDOS
+ 01D0 B7        	ORA	A
+ 01D1 C2E201    	JNZ	WRITE$ERROR
+ 01D4 3A3404    	LDA	RSECTNO
+ 01D7 323504    	STA	SECTNO		;UPDATE SECTOR #
+ 01DA 3E06      DO$ACK	MVI	A,ACK
+ 01DC CDE702    	CALL	SEND
+ 01DF C35601    	JMP	RECV$LOOP
+                
+                WRITE$ERROR:
+ 01E2 CD8002    	CALL	ERXIT
+ 01E5 0D0A0A4572	DB	13,10,10,'Error Writing File',13,10,'$'
+                
+                GOT$EOT:
+ 01FD 3E06      	MVI	A,ACK		;ACK THE EOT
+ 01FF CDE702    	CALL	SEND
+ 0202 115C00    	LXI	D,FCB
+ 0205 0E10      	MVI	C,CLOSE
+ 0207 CD0500    	CALL	BDOS
+ 020A 3C        	INR	A
+ 020B C2D703    	JNZ	XFER$CPLT
+ 020E CD8002    	CALL	ERXIT
+ 0211 0D0A0A4572	DB	13,10,10,'Error Closing File',13,10,'$'
+                ;
+                ERASE$OLD$FILE:
+ 0229 115C00    	LXI	D,FCB
+ 022C 0E11      	MVI	C,SRCHF		;SEE IF IT EXISTS
+ 022E CD0500    	CALL	BDOS
+ 0231 3C        	INR	A		;FOUND?
+ 0232 C8        	RZ			;NO, RETURN
+ 0233 115C00    ERAY:	LXI	D,FCB
+ 0236 0E13      	MVI	C,ERASE
+ 0238 CD0500    	CALL	BDOS
+ 023B C9        	RET
+                ;
+                MAKE$NEW$FILE:
+ 023C 115C00    	LXI	D,FCB
+ 023F 0E16      	MVI	C,MAKE
+ 0241 CD0500    	CALL	BDOS
+ 0244 3C        	INR	A		;FF=BAD
+ 0245 C0        	RNZ			;OPEN OK
+                
+                ;DIRECTORY FULL - CAN'T MAKE FILE
+ 0246 CD8002    	CALL	ERXIT
+ 0249 0D0A0A4572	DB	13,10,10,'Error - Can''t Make File',13,10
+ 0265 2864697265	DB	'(directory must be full)',13,10,'$'
+                ;
+                ; S U B R O U T I N E S
+                ;
+                ; - - - - - - - - - - - - - - -
+                
+                ;EXIT PRINTING MESSAGE FOLLOWING 'CALL ERXIT'
+                
+ 0280 D1        ERXIT	POP	D		;GET MESSAGE
+ 0281 0E09      	MVI	C,PRINT
+ 0283 CD0500    	CALL	BDOS		;PRINT MESSAGE
+ 0286 2A3204    EXIT	LHLD	STACK		;GET ORIGINAL STACK
+ 0289 F9        	SPHL			;RESTORE IT
+ 028A C9        	RET			;--EXIT-- TO CP/M
+                
+                ; - - - - - - - - - - - - - - -
+                ;MODEM RECV
+                ;-------------------------------------
+ 028B D5        RECV	PUSH	D		;SAVE
+ 028C 11009F    MSEC	lxi	d,(159 shl 8)	;49 cycle loop, 6.272ms/wrap * 159 = 1 second
+ 028F 3A3604    	lda	fPortB		;using port B?
+ 0292 B7        	ora	a
+ 0293 C2B702    	jnz	MWTIB
+                
+                ;  port A input
+                
+ 0296 DBFD      MWTI	IN	SIOACR
+ 0298 E602      	ANI	RCVMASK
+ 029A FE02      	CPI	RCVRDY
+ 029C CAAE02    	JZ	MCHAR		;GOT CHAR
+ 029F 1D        	DCR	E		;COUNT DOWN
+ 02A0 C29602    	JNZ	MWTI		;FOR TIMEOUT
+ 02A3 15        	DCR	D
+ 02A4 C29602    	JNZ	MWTI
+ 02A7 05        	DCR	B		;DCR # OF SECONDS
+ 02A8 C28C02    	JNZ	MSEC
+                
+                ;MODEM TIMED OUT RECEIVING
+                
+ 02AB D1        	POP	D		;RESTORE D,E
+ 02AC 37        	STC			;CARRY SHOWS TIMEOUT
+ 02AD C9        	RET
+                
+                ;GOT MODEM CHAR
+                
+ 02AE DBFC      MCHAR	IN	SIOADR
+ 02B0 D1        	POP	D		;RESTORE DE
+ 02B1 F5        	PUSH	PSW		;CALC CHECKSUM
+ 02B2 81        	ADD	C
+ 02B3 4F        	MOV	C,A
+ 02B4 F1        	POP	PSW
+ 02B5 B7        	ORA	A		;TURN OFF CARRY TO SHOW NO TIMEOUT
+ 02B6 C9        	RET
+                
+                ;  port B input. Look for Ctrl-C on port A to abort
+                
+ 02B7 DBFF      MWTIB	IN	SIOBCR
+ 02B9 E602      	ANI	RCVMASK
+ 02BB FE02      	CPI	RCVRDY
+ 02BD CADE02    	JZ	MCHARB		;GOT CHAR
+ 02C0 1D        	DCR	E		;COUNT DOWN
+ 02C1 C2B702    	JNZ	MWTIB		;FOR TIMEOUT
+ 02C4 DBFD      	in	SIOACR		;see if a ctrl-c pressed on console
+ 02C6 0F        	rrc			;character present?
+ 02C7 D2D302    	jnc	noCtrlC		;no
+ 02CA DBFC      	in	SIOADR
+ 02CC FE03      	cpi	ctrlc		;is it a Ctrl-C?
+ 02CE C2D302    	jnz	noCtrlC		;no
+ 02D1 D1        	pop	d		;restore d,e
+ 02D2 C9        	ret			;carry is clear (no timeout), exit
+                
+ 02D3 15        noCtrlC	DCR	D
+ 02D4 C2B702    	JNZ	MWTIB
+ 02D7 05        	DCR	B		;DCR # OF SECONDS
+ 02D8 C28C02    	JNZ	MSEC
+                
+                ;MODEM TIMED OUT RECEIVING
+                
+ 02DB D1        	POP	D		;RESTORE D,E
+ 02DC 37        	STC			;CARRY SHOWS TIMEOUT
+ 02DD C9        	RET
+                
+                ;GOT MODEM CHAR
+                
+ 02DE DBFE      MCHARB	IN	SIOBDR
+ 02E0 D1        	POP	D		;RESTORE DE
+ 02E1 F5        	PUSH	PSW		;CALC CHECKSUM
+ 02E2 81        	ADD	C
+ 02E3 4F        	MOV	C,A
+ 02E4 F1        	POP	PSW
+ 02E5 B7        	ORA	A		;TURN OFF CARRY TO SHOW NO TIMEOUT
+ 02E6 C9        	RET
+                
+                ; - - - - - - - - - - - - - - -
+                ;MODEM SEND CHAR ROUTINE
+                ;----------------------------------
+                ;
+ 02E7 F5        SEND	PUSH	PSW		;CHECK IF MONITORING OUTPUT
+ 02E8 81        	ADD	C		;CALC CKSUM
+ 02E9 4F        	MOV	C,A
+ 02EA 3A3604    	lda	fPortB		;using port B?
+ 02ED B7        	ora	a
+ 02EE C2FE02    	jnz	SENDWB
+                
+                ; Use port A
+                
+ 02F1 DBFD      SENDW	IN	SIOACR
+ 02F3 E601      	ANI	XMTMASK
+ 02F5 FE01      	CPI	XMTRDY
+ 02F7 C2F102    	JNZ	SENDW
+ 02FA F1        	POP	PSW		;GET CHAR
+ 02FB D3FC      	OUT	SIOADR
+ 02FD C9        	RET
+                
+                ; Use port B
+                
+ 02FE DBFF      SENDWB	IN	SIOBCR
+ 0300 E601      	ANI	XMTMASK
+ 0302 FE01      	CPI	XMTRDY
+ 0304 C2FE02    	JNZ	SENDWB
+ 0307 F1        	POP	PSW		;GET CHAR
+ 0308 D3FE      	OUT	SIOBDR
+ 030A C9        	RET
+                
+ 030B 53656E6420mSendA	db	'Send the file now using XMODEM...$'
+ 032D 53656E6420mSendB	db	'Send the file now using XMODEM on modem port...$'
+ 035D 0D0A504347mHelp	db	CR,LF,'PCGET Ver 1.0 for Morrow Micro-Decision 2/3',CR,LF,LF
+ 038D 5573616765	db	'Usage: PCGET file.ext [B]',CR,LF
+ 03A8 2020202020	DB	'       (B specifies modem port for transfer)',CR,LF,'$'
+                
+                ;DONE - CLOSE UP SHOP
+                
+                XFER$CPLT:
+ 03D7 CD8002    	CALL	ERXIT
+ 03DA 0D0A0A5472	DB	13,10,10,'Transfer Complete',13,10,'$'
+                
+ 03F1 CD8002    abort:	call	erxit
+ 03F4 0D0A0A5472	db	13,10,10,'Transfer Aborted',13,10,'$'
+                
+ 040A           	DS	40	;STACK AREA
+ 0432           STACK	DS	2	;STACK POINTER
+ 0434           RSECTNO	DS	1	;RECEIVED SECTOR NUMBER
+ 0435           SECTNO	DS	1	;CURRENT SECTOR NUMBER 
+ 0436           fPortB	ds	1	;flag to use modem port instead of console
+                ;
+                ; BDOS EQUATES (VERSION 2)
+                ;
+ 0001 =         RDCON	EQU	1
+ 0002 =         WRCON	EQU	2
+ 0009 =         PRINT	EQU	9
+ 000B =         CONST	EQU	11	;CONSOLE STAT
+ 000F =         OPEN	EQU	15	;0FFH=NOT FOUND
+ 0010 =         CLOSE	EQU	16	;   "	"
+ 0011 =         SRCHF	EQU	17	;   "	"
+ 0012 =         SRCHN	EQU	18	;   "	"
+ 0013 =         ERASE	EQU	19	;NO RET CODE
+ 0014 =         READ	EQU	20	;0=OK, 1=EOF
+ 0015 =         WRITE	EQU	21	;0=OK, 1=ERR, 2=?, 0FFH=NO DIR SPC
+ 0016 =         MAKE	EQU	22	;0FFH=BAD
+ 0017 =         REN	EQU	23	;0FFH=BAD
+ 001A =         STDMA	EQU	26
+ 0005 =         BDOS	EQU	5
+ 0000 =         REIPL	EQU	0
+ 005C =         FCB	EQU	5CH	;DEFAULT FCB
+ 005D =         PARAM1	EQU	FCB+1	;COMMAND LINE PARAMETER 1 IN FCB
+ 006D =         PARAM2	EQU	PARAM1+16	;COMMAND LINE PARAMETER 2
+ 0437           	END
