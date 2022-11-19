@@ -1,0 +1,1413 @@
+;	MICRO-DECISION
+;	CP/M 2.2
+;	BIOS REV 2.2
+;	COPYRIGHT 1982,1983
+;	MORROW DESIGNS, INC.
+;	SAN LEANDRO, CA.
+;
+;	06/20/83
+;
+;***********************************************************************
+;	DOUBLE SIDED
+;***********************************************************************
+;
+	.Z80
+;
+MEMSIZE	EQU 64
+;
+REV	EQU 22H
+;
+CPM	EQU (MEMSIZE-9)*1024
+BDOS	EQU CPM+806H
+BIOS	EQU CPM+1600H
+;
+	.PHASE BIOS
+;
+;
+ROM	EQU 0
+;
+HMRM	EQU ROM+6
+WRHSRM	EQU ROM+0CH
+RDHSRM	EQU ROM+9
+DISRM	EQU ROM+0FH
+BTERM	EQU ROM+18H
+ROMDATX	EQU ROM+1BH
+MSGRM	EQU ROM+3
+CENTDRV	EQU ROM+1DH	;ROM ENTRY POINT FOR CENTRONICS DRIVER
+RDLSEC	EQU ROM+20H	
+WRTLSEC	EQU ROM+23H
+;
+;	CONTROL BITS WITHIN DFLAG BYTE
+HSTACT	EQU 0	;Host buffer active flag.
+		;Buffer contains nothing if = 0.
+		;Buffer contains a sector if = 1.
+;
+HSTWRT	EQU 1	;Host buffer dirty flag.
+		;Buffer has not been written to if = 0.
+		;Buffer has been written to if = 1.
+;
+RSFLAG	EQU 2	;Read sector flag.
+		;Sector need not be read if = 0.
+		;Sector must be read if = 1.
+;
+
+READOP	EQU 3	;Read if = 1. Write if = 0.
+;
+
+HNDSHK	EQU 4	;Handshake with DSR and CTS if 1, just CTS if 0.
+;
+
+LSTMAP	EQU 5	;1=>Cent. is LST:, SER2 is PUN:
+		;0=>SER2 is LST:, Cent. is PUN:
+;
+
+IMS	EQU 6	;In Memory Submit flag.
+		;I.M.S. in-active if = 0.
+		;I.M.S. active if = 1.
+;
+IMSBUF	EQU 7	;In Memory Submit buffer empty flag.
+		;I.M.S. buffer is empty if = 0.
+		;I.M.S. buffer is not empty if = 1.
+;
+;
+ROMCTL	EQU 0F6H
+;
+DPHOFF	EQU 10
+;
+BDFM	EQU 5
+NRDY	EQU 6
+SIZMSK	EQU 18H
+DSM	EQU 2
+;
+;
+WRALL	EQU 0
+WRDIR	EQU 1
+WRUAL	EQU 2
+;
+;
+S1STAT	EQU 0FDH
+S1DATA	EQU 0FCH
+;
+S2DATA	EQU 0FEH
+S2STAT	EQU 0FFH
+;
+CSTAT	EQU 0F5H
+CTCSEL	EQU 0F3H	; CHANNEL SELECT PORT FOR CTC
+CH1DIV	EQU 0F1H	; PORT FOR SETTING BAUD RATE OF 1st SERIAL PORT
+CH2DIV	EQU 0F2H	; PORT FOR SETTING BAUD RATE OF 2nd SERIAL PORT
+DFLT1	EQU 06h		; default baud rate for 1st serial port
+DFLT2	EQU 03h		; default baud rate for 2nd serial port
+;
+CR	EQU 0DH
+LF	EQU 0AH
+ASC0	EQU 30H
+;
+START:	JP BOOT
+WBOT:	JP WBOOT
+	JP CONST
+	JP CONIN
+CNOUT:	JP CONOUT
+	JP LST
+	JP PUN
+	JP PTR
+	JP HOME
+	JP SELDSK
+	JP SETTRK
+	JP SETSEC
+	JP SETDMA
+	JP READ
+	JP WRITE
+	JP LISTST
+	JP SECTRAN
+;
+	JP CVMSG	;CHANGE VIRTUAL DRIVE MESG.
+;
+	JP RDBLK	;DIRECT DISK READ
+	JP WRBLK	;DIRECT DISK WR
+	JP DISCIO	;DIRECT DISK I/O
+;
+	DB REV
+	DW RAMDATX
+	DW RAMDATY
+	DW MTAB
+	DW XLTAB
+;
+ETBLPTR:DW ESCTBL
+CTBLPTR:DW CTRLTBL
+EVCTPTR:DW ESCVECT
+CVCTPTR:DW CTVECT
+	DW DCASTRT
+;
+	JP INITCTC	;CTC init routine
+;
+WBOOT:	LD SP,STACK
+	LD DE,DSKBUF
+	PUSH DE
+	POP IX
+	LD BC,DATXLN
+	OUT (ROMCTL),A	;TURN ON ROM
+	LD HL,(ROMDATX)
+	LDIR
+;
+	LD IY,RAMDATY
+;
+	LD (IX+HSTSEC),2
+	LD (IX+SECCNT),8
+	LD (IX+SECSIZ+1),81H
+	LD (IX+HSTBUF+1),HIGH CPM
+;
+	CALL RDHST
+;
+	LD A,(IX+ERFLAG)
+	OR A
+	JP NZ,BTERR
+;
+	LD (IX+HSTSEC),1
+	LD (IX+HSTTRK),1
+	LD (IX+SECCNT),3
+	LD (IX+HSTBUF+1),HIGH CPM + 16
+;
+	CALL RDHST
+;
+	LD A,(IX+ERFLAG)
+	OR A
+	JP NZ,BTERR
+;
+	LD HL,CPM+3
+;
+GOCPM:	LD BC,80H
+	CALL SETDMA
+;
+	LD A,0C3H
+	LD (0),A
+	LD (5),A
+;
+	XOR A
+	LD (3),A
+;
+	PUSH HL
+	LD HL,WBOT
+	LD (1),HL
+;
+	LD HL,BDOS
+	LD (6),HL
+;
+	LD HL,(VNUMB)
+	LD (8),HL
+;
+	LD A,(IY+DFLAG)
+	AND 0B0H	;MASK IMSBUF FLAG, DON'T CHANGE BITS 4 OR 5
+	SET IMS,A	;ACTIVATE IMS
+	LD (IY+DFLAG),A
+;
+	LD (IY+UNACNT),0
+;
+	LD A,(4)
+	LD C,A
+;
+	POP HL
+	JP (HL)
+;
+BTERR:	OUT (ROMCTL),A
+	JP BTERM
+;
+;
+INITCTC:		; SET BAUD RATES FOR BOTH SERIAL PORTS
+	LD A,07EH	; SELECT CTC CHANNEL 1
+	OUT (CTCSEL),A
+	LD A,(SER1BAUD)	; GET BAUD RATE FOR 1st SERIAL PORT
+	LD C,A
+	CALL GETVAL	; POINT TO DIVISOR
+	LD C,CH1DIV	; SET UP TO LOAD DIVISOR FOR CHANNEL 1
+	CALL SETBAUD	; SET BAUD RATE FOR 1st SERIAL PORT
+	LD A,0BEH	; SELECT CTC CHANNEL 2
+	OUT (CTCSEL),A
+	LD A,(SER2BAUD)	; GET BAUD RATE FOR 2nd SERIAL PORT
+	LD C,A
+	CALL GETVAL	; POINT TO DIVISOR
+	LD C,CH2DIV	; SET UP TO LOAD DIVISOR FOR CHANNEL 2
+	CALL SETBAUD	; SET IT
+	RET
+;
+GETVAL:			; SET HL TO POINT TO DIVISOR FOR SELECTED
+			; BAUD RATE. C IS OFFSET FROM BASE ON ENTRY
+	LD HL,BAUDTBL	; POINT TO BASE OF TABLE
+	LD B,0
+	ADD HL,BC
+	ADD HL,BC	; HL NOW POINTS TO DIVISOR FOR SELECTED BAUD RATE
+	RET
+;
+SETBAUD:		; OUTPUT THE VALUES POINTED TO BY HL TO THE
+			; PORT SELECTED IN REG. C.
+	LD A,(HL)	; GET LOW BYTE OF DIVISOR
+	OUT (C),A	; OUTPUT IT
+	INC HL		; POINT TO HIGH BYTE
+	LD A,(HL)	; GET THE HIGH BYTE OF DIVISOR
+	OUT (C),A	; OUTPUT IT
+	RET
+;
+baudtbl:	; DIVISOR TABLE FOR BAUD RATES
+;
+	DW	1136		;110
+	DW	 417		;300
+	DW	 208		;600
+	DW	 104		;1200
+	DW	  52		;2400
+	DW	  26		;4800
+	DW	  13		;9600
+;
+;
+CONST:	IN A,(S1STAT)	;CONSOLE STATUS ROUTINE
+	AND 2		;SEE IF RDY
+	RET Z		;RETURN WITH 0 IF NOT RDY
+	LD A,0FFH	;RETURN WITH FF IF RDY
+	RET
+;
+CONIN:	LD A,(RAMDATY+DFLAG)	;GET DFLAG
+	AND 0C0H	;MASK OUT IMS FLAGS
+	CP 0C0H		;CHECK IF IMS ACTIVE
+	JR Z,SUBMT	;JMP IF SUBMIT ACTIVE
+;
+CNIN:	IN A,(S1STAT)	;CONSOLE INPUT ROUTINE
+	BIT 1,A		;SEE IF RDY
+	JR Z,CNIN	;JMP IF NOT RDY
+;
+	IN A,(S1DATA)	;GET CHARACTER
+CHRET:	AND 7FH		;MASK OFF PARITY
+	RET
+;
+; SUBMT locates the submit string block within the BIOS ram area,
+; the next character is taken from the buffer and passed to CP/M.
+; The free block and submit string block pointers are updated.
+; If this was the last character in the buffer, then the IMSBUF 
+; bit in dflag is cleared.
+; If the parity bit is set on the character, then the IMS bit in 
+; dflag is cleared, which de-activates IMS until the next warm
+; boot.
+;
+;
+PARITY	EQU 7
+;
+SUBMT:	IN A,(S1STAT)	;SEE IF CHAR. READY
+	BIT 1,A
+	JR Z,SUBGO	;JMP IF NO INPUT
+;
+	IN A,(S1DATA)	;GET CHAR.
+	CP 3		;SEE IF CNTL-C
+	JR NZ,SUBGO	;JMP IF NOT
+;
+	LD A,(RAMDATY+DFLAG)	;DE-ACTIVATE IMS
+	RES IMSBUF,A
+	LD (RAMDATY+DFLAG),A
+;
+	LD A,18H
+	RET
+;
+SUBGO:	LD HL,XLTAB	;POINTER TO RAM AREA
+	LD A,0FFH	;FREE SPACE CODE
+	CALL FIND	;FIND FREE SPACE
+;
+	INC DE		;UPDATE FREE SPACE POINTER
+	LD (HL),D
+	DEC HL
+	LD (HL),E
+;
+	ADD HL,DE	;SET HL ==> IMS BUFFER
+	INC HL
+	INC HL
+;
+	LD E,(HL)	;UPDATE IMS BUFFER HEADER
+	LD (HL),0FDH
+	INC HL
+	LD D,(HL)
+	DEC DE
+	LD (HL),E
+	INC HL
+;
+	LD A,E		;SEE IF LAST CHAR.
+	OR D
+	LD A,(RAMDATY+DFLAG)
+	JR NZ,SKP1	;JMP IF NOT LAST CHAR.
+;
+	RES IMSBUF,A	;CLEAR IMSBUF FLAG
+;
+SKP1:	BIT PARITY,(HL)	;CHECK PARITY BIT OF CHAR.
+	JR Z,SKP2	;JMP IF PARITY = 0
+;
+	RES IMS,A	;DE-ACTIVATE IMS
+;
+SKP2:	LD (RAMDATY+DFLAG),A	;SAVE DFLAG
+;
+	LD A,(HL)	;GET CHAR.
+	LD (HL),D	;FINISH UPDATING IMS BLOCK HEADER
+	JR CHRET	;RETURN TO CP/M
+;
+; FIND searches BIOS ram area starting from HL for the block
+; header contained in A.
+;
+FIND:	CP (HL)		;SEE IF HEADER CODE MATCHES
+	INC HL		;INCREMENT POINTER
+;
+	LD E,(HL)	;GET OFFSET TO NEXT BLOCK
+	INC HL
+	LD D,(HL)
+;
+	RET Z		;RETURN IF BLOCK FOUND
+;
+	INC HL		;SET POINTER TO NEXT BLOCK
+	ADD HL,DE
+	JR FIND		;KEEP LOOKING
+;
+;
+; On entry to XLATE, register C contains the character to be output.
+; A test is made to see if the system is in the process of outputing
+; a multiple character escape sequence, or if the character is a
+; Morrow Standars Control Code. If neither test is true, than the
+; character is output.
+; If the character is part of a multiple character escape sequence,
+; then the character is passed to the ESCAPE routine. If the
+; character is a MSCC, then it is converted to the appropriate
+; sequence, and output.
+;
+esc	equ 1bh
+;
+conout:	ld	a,(esc_lvl)	; test escape flag
+	or	a		; check if flag is set
+	jr	nz,ESCAPE	; if escape sequence, jump
+	ld	a,1fh		; test if MSCC
+	cp	c
+	jp	c,cout		; if not, then xmit it
+	ld	a,esc		; check if esc char
+	cp	c		;
+	jp	nz,notesc	; if not, jump
+	ld	a,1		; otherwise, set escape
+	ld	(esc_lvl),a	; level to 1st stage
+	ret			; and return
+notesc:	ld	hl,(ctblptr)	; set to search control table
+	call	lookup		; and lookup character in table
+	or	a		; see if char found
+	jp	z,cout		; if not, output char
+	ld	hl,(cvctptr)	; calculate string location
+;
+; subroutine: outstr
+;
+; This routine outputs a string of characters to the console.
+; It is used by the translate program to output a terminal 
+; specific string in order to implement a control sequence.
+; When entered, the HL register pair points to the base of
+; the string table, and the BC register pair is the offset
+; to the string. Characters are output starting with the 
+; first character until a byte value of ffH is detected.
+;
+outstr:	add	hl,bc		; add offset to base
+	ld	e,(hl)		; get location of stringŠ	inc	hl
+	ld	d,(hl)
+	ex	de,hl		; move address of string to hl
+loop:	ld	a,(hl)		; get a char
+	cp	0ffh		; see if done ( ffh==>done)
+	ret	z
+	ld	c,a		; if not, get char
+	call	cout		; xmit it
+	inc	hl
+	jr	loop		; until end of string
+;
+; This routine is used to create a string for direct 
+; cursor addressing, or to translate character codes.
+; Upon receipt of an Escape code from
+; a program, the esc_lvl is set to indicate an escape 
+; sequence is being output. When the next character is 
+; received, it is tested to see if it is an equals sign (=).
+; If it is not, than an escape character is output, followed 
+; by the character received.  If the character is the equal sign,
+; then two more characters will be accepted, after-which a string
+; will be output for positioning the cursor.
+;
+escape:	ld	a,(esc_lvl)	; get current escape level
+	cp	1		; level 1?
+	jr	z,seq1		; then process 1st part
+	cp	2		; level 2?
+	jr	z,seq2		; then process 2nd level
+	jr	seq3		; it must be level 3
+;
+seq1:	ld	a,'='		; equal sign?
+	cp	c		; if char is =, then DCA started
+	jr	z,set		; else, could be character to xlate
+	xor	a		; clear escape level
+	ld	(esc_lvl),a
+	ld	hl,(etblptr)	; point to xlate table
+	call	lookup		; lookup character
+	or	a		; see if char found
+	jr	nz,down		; if found, jump to output
+	push	bc
+	ld	c,esc		; else, send escape, then char
+	call	cout		; send escape
+	pop	bc		; get original character
+	jp	cout		; send it
+;
+down:	ld	hl,(evctptr)	; calculate string location
+	jr	outstr		; output the string
+
+set:	ld	a,2		; otherwise, set for level 2
+	ld	(esc_lvl),a	; processing
+	ret			; and return
+;
+seq2:	ld	a,c
+	ld	(first),a	; this is the first char
+	ld	a,3		; set for level 3
+	ld	(esc_lvl),a
+	retŠ;
+seq3:	ld	a,(offset2)	; get offset for 2nd char
+	add	a,c		; add to 2nd char
+	ld	(second),a	; save 2nd char
+;
+	ld	a,0
+	ld	(esc_lvl),a	; clear escape sequence
+;
+	ld	de,first	; pointer to 1st char
+;
+	ld	a,(de)		; get 1st char
+	ld	c,a		; save in c
+	ld	a,(offset1)	; get offset for 1st char
+	add	a,c		; add to 1st char
+	ld	(de),a		; save 1st char
+;
+	ld	a,(order)
+	push	af
+	rra
+	sbc	a,a		; 0==>1-2  :  FF==>2-1
+	ld	b,a		; save order in b
+;
+	ld	a,e		; use order to adjust de
+	sub	b
+	ld	e,a		; de points to 1st char to output
+;
+	ld	hl,dcastrt	; pointer to dca prefix sting
+	call	loop		; output string
+;
+	ld	a,(de)		; get 1st char to output
+	ld	c,a
+	pop	af
+	bit	1,a		; see if ascii
+	push	af
+	call	nz,ascout	; call ascii if nz
+	call	cout		; output char
+;
+	ld	hl,dcamid	; pointer to seperator string
+	call	loop		; output string
+;
+	ld	a,e		; use order to adjust de
+	add	a,b
+	inc	b
+	add	a,b
+	ld	e,a		; de points to 2nd char to output
+;
+	ld	a,(de)		; get char to output
+	ld	c,a
+	pop	af
+	call	nz,ascout	; call ascii if flag set
+	call	cout		; output char
+;
+outend:	ld	hl,dcaend	; point to dca terminator
+	jp	loop
+;
+;
+; subroutine: lookup
+;
+; This routine is entered with the HL register pair pointing to
+; the base of a table to be searched. Register C contains the 
+; character to search for. Upon return, The accumulator will
+; contain 0 if the character was not found, and ffh if it was found.
+; If the character was found in the table, then bc will contain
+; the offset into the table, multiplied by 2. i.e BC / 2 = locationŠ; of character in table. The maximum number of values in the table is
+; 20 h.
+;
+lookup:	ld	b,0		; init offset
+nmtch:	ld	a,(hl)		; get value from table
+	cp	0ffh		; see if end of table
+	jr	z,nochar	; jmp if end
+;
+	cp	c		; see if char matches
+	jr	z,mtch		; jmp if match
+;
+	inc	hl		; inc table pointer
+	inc	b		; inc offset
+	inc	b		;  "    "
+	jr	nmtch		; continue search
+;
+mtch:	ld	c,b		; put offset in bc
+	ld	b,0
+	ld	a,0ffh		; set a to success
+	ret
+;
+nochar:	xor	a		; set a to failure
+	ret
+;
+;
+; ASCOUT takes a binary value in C and output its decimal ascii
+; equivalent.
+;
+ascout:	push	bc
+	ld	a,c
+	ld	c,'0'	;init to ascii 0
+;
+tens:	sub	10	;subtract 10 from value
+	jr	c,ones	;jmp if underflow
+	inc	c	;inc ascii tens value
+	jr	tens	;loop
+;
+ones:	ld	b,a	;save intermediate value
+	ld	a,'0'	;a = ascii 0
+	cp	c	;see if tens value is 0
+	call	nz,cout	;output tens value if not 0
+;
+	ld	a,3ah	;ascii 0 plus 10
+	add	a,b	;add to produce ones value
+	pop	bc
+	ld	c,a	;get ready for output
+	ret
+;
+;
+COUT:	IN A,(S1STAT)	;CONSOLE OUTPUT ROUTINE
+	BIT 0,A		;SEE IF RDY
+	JR Z,COUT	;JMP IF NOT RDY
+;
+	LD A,C		;OUTPUT CHARACTER
+	OUT (S1DATA),A
+	RET
+;
+;XON/XOFF PROTOCOL HANDLER FOR MICRO DECISION CBIOS
+;
+LST:
+	LD A,(RAMDATY+DFLAG)	; GET FLAG BYTE TO CHECK WHICH OUTPUT DRIVER
+	BIT 5,A			; SEE IF CENTRONICS BIT SET
+	JR NZ,CENTOUT		; IF SO, USE CENTRONICS DRIVER
+				; ELSE, USE SERIAL PORT DRIVER
+LSTDRV:	CALL	SSTAT		; STATUS OF LSTFLG
+	JR	Z,LSTDRV	; IF NOT READY, LOOP
+OVER:	LD	A,C		; ELSE, GET CHAR
+	OUT	(S2DATA),A	; XMIT IT
+	RET
+;
+; 
+LISTST:	LD	A,(RAMDATY+DFLAG)	; GET PORT MAPPING
+	BIT	5,A		; SEE IF CENTRONICS PORT
+	JR	NZ,CENTSTAT	; IF CENTRONICS, CHECK IT'S STATUS
+SSTAT:	CALL	RDRSTAT		; GET A CHARACTER, OR NULL
+	CP	13H		; IF XOFF R'CVD...
+	JR	NZ,NXTCHK	; IF NOT, CHECK IF XON
+	XOR	A		; SET FLAG TO NOT RDY
+	LD	(LSTFLG),A
+	RET			; RETURN NOT RDY
+NXTCHK:
+	CP	11H		; IF XON, THEN IT MIGHT BE READY
+	JR	NZ,CHKFLG	; ELSE, STATE NOT CHANGING
+	LD	A,0FFH
+	LD	(LSTFLG),A	; SET FLAG TO RDY
+CHKFLG:	LD	A,(LSTFLG)	; GET STATUS FLAG
+LSTRET:	OR	A		; SET FLAGS
+	RET	Z		; IF ZERO, THEN XOFF PENDING
+	LD 	A,(RAMDATY+DFLAG)	;SEE IF HRDWR HNDSHKNG ENABLED
+	BIT	4,A
+	JR	Z,CTS		; IF 0, THEN USE ONLY CTS HANDSHAKING
+	IN	A,(S2STAT)	; GET STATUS
+	AND	85H		; CHECK IF XMIT READY
+	CP	85H		; SET FLAGS ON STATUS OF TBRE AND DSR
+	JR	STAT		; JUMP TO STATUS TEST
+CTS:	IN	A,(S2STAT)	; TEST STATUS, IGNORE DSR BIT
+	AND	05h		; GET TBRE FLAG
+	CP	05h		; SET FLAGS ON STATUS OF TBRE
+STAT:	LD	A,0		; SET NOT READY STATUS
+	JR	NZ,LSTRET	; JMP IF NOT READY
+	DEC	A		; SET READY STATUS
+	RET			; AND RETURN IT.
+;
+;	
+RDRSTAT:
+	IN	A,(S2STAT)	; GET STATUS
+	AND	2
+	RET	Z		; RETURN IF NO CHAR
+	IN	A,(S2DATA)	; ELSE, GET CHAR
+	AND	7FH		; MASK PARITY
+	SCF			; SET FLAG
+	RET
+;
+CENTSTAT:
+	IN	A,(CSTAT)	; CHECK CENTRONICS RDY STATUS
+	BIT	4,A
+	LD	A,0
+	RET	NZ
+	DEC	A
+	RET
+;
+;
+PTR:
+	CALL	RDRSTAT		;GET STATUS OR CHAR.
+	JR	NC,PTR		;LOOP IF NO CHAR.
+	RET
+;
+PUN:	LD	A,(RAMDATY+DFLAG)	;CHECK IF CENT. OR SERIAL
+	BIT	5,A
+	JR	Z,CENTOUT		;IF ZERO, THEN USE CENTRONICS
+	JR	LSTDRV			; USE SERIAL PORT DRIVER
+CENTOUT:
+	CALL	MSTK			; SAVE STACK
+	OUT	(ROMCTL),A		; TURN ON ROM
+	CALL	CENTDRV			; USE ROM CENTRONICS DRIVER
+	IN	A,(ROMCTL)		; TURN OFF ROM
+	POP	HL			; RESTORE STACK
+	LD	SP,HL
+	RET
+;
+HOME:	CALL MSTK	;FIX STACK
+;
+	PUSH IX		;SAVE IX & IY
+	PUSH IY
+;
+	LD IX,RAMDATX	;INIT IX & IY
+	LD IY,RAMDATY
+;
+	OUT (ROMCTL),A	;TURN ON ROM
+;
+	CALL HMRM	;CALL ROM
+;
+CRETN:	IN A,(ROMCTL)	;TURN OFF ROM
+	POP IY		;RESTORE IX & IY
+	POP IX
+;
+	POP HL
+	LD SP,HL	;FIX STACK
+;
+	RET
+;
+MSTK:	POP DE		;SAVE RET. ADDR.
+;
+	LD HL,0		;GET CURRENT STACK
+	ADD HL,SP	;IN HL.
+;
+	LD SP,STACK	;MOVE STACK
+	PUSH HL		;SAVE OLD STACK
+;
+	PUSH DE		;RESTORE RET. ADDR.
+	RET
+;
+SELDSK:	LD A,4		;CHECK DRIVE BOUND
+	CP C
+	JR C,BDRV	;JMP IF BAD
+;
+	LD A,C		;SET DRIVE
+	LD (SEKDSK+RAMDATY),A
+;
+	BIT 0,E		;SEE IF FIRST TIME
+	JR NZ,SKPSET	;JP IF NOT FIRST
+;
+	LD HL,RAMDATY	;POINTER TO RAMDATY
+	LD A,C
+	CALL GDSK1	;GET MTAB POINTER
+;
+	BIT 7,(HL)	;SEE IF FOREIGN DRIVE
+	JR NZ,SKPSET	;JP IF FOREIGN
+;
+	INC HL
+	PUSH HL		;SAVE DSKDEF POINTER
+	PUSH BC
+	CALL GETAB	;READ CONFIG TABLE FROM DISKETTE
+	POP BC
+	OR A		;SEE IF ERROR
+	JP NZ,0		;WARM BOOT IF ERROR
+;
+DSKTB	EQU DSKBUF+80H+25	;CHECK FOR VALID TABLE
+	LD HL,DSKTB	;POINTER TO END OF TABLE+1
+	LD B,25		;COUNT MUST BE ODD!
+	LD E,0		;INIT 0-CHECK BYTE
+;
+;	ACC IS 0 ALREADY
+CHKLP:	DEC HL		;DEC POINTER
+	XOR (HL)	;X-OR TABLE VALUE INTO PARITY CHECK BYTE
+	LD D,A		;SAVE PARITY CHECK BYTE
+	OR E		;OR IN 0-CHECK BYTE
+	LD E,A		;SAVE 0-CHECK BYTE
+	LD A,D		;RESTORE PARIY CHECK BYTE
+	DJNZ CHKLP	;DEC TABLE LENGTH & LOOP TIL DONE
+	INC HL		;HL=>DSKDEF1
+;
+	OR A		;A=0 IF TABLE OK
+	LD A,E		;A = 0-CHECK BYTE
+	LD DE,SDPB	;POINTER TO S.S. DPB
+	JR NZ,SSIDE	;ASSUME S.S. IF INVALID TABLE
+;
+	OR A		;CHECK 0-CHECK BYTE
+	JR Z,SSIDE	;INVALID TABLE IF ZERO
+;
+DSKTDB	EQU DSKBUF+80H+9
+	LD DE,DSKTDB	;POINTER TO DPB IN BOOT
+;
+	BIT DSM,(HL)	;SEE IF D.S. MEDIA
+	JR Z,SSIDE	;JP IF S.S.
+;
+	POP HL		;GET DSKDEF POINTER
+	SET DSM,(HL)	;SET FOR D.S. MEDIA
+	JR DSIDE
+;
+SSIDE:	POP HL
+	RES DSM,(HL)	;SET FOR S.S. MEDIA
+;
+DSIDE:	XOR A		;SET Z FLAG
+SKPST1:	LD H,0		;CALC. DPB POINTER
+	LD L,C
+;
+	ADD HL,HL
+	ADD HL,HL
+	ADD HL,HL
+	ADD HL,HL
+;
+	LD BC,DPBASE
+	ADD HL,BC	;HL=DPB POINTER
+;
+	PUSH HL		;SAVE DPB POINTER
+	PUSH DE		;SAVE NEW DPB POINTER
+	LD DE,DPHOFF	;OFFSET TO DPH POINTER
+	ADD HL,DE	;GET POINTER TO DPH
+	LD E,(HL)
+	INC HL
+	LD D,(HL)
+	POP HL
+	PUSH DE
+;
+	JR NZ,NOTAB
+;
+	LD BC,15
+	LDIR		;UPDATE DPB
+;
+NOTAB:	POP HL
+	LD A,(HL)	;GET SECTORS PER TRACK
+	LD (SECTRK+RAMDATY),A	;SAVE IN RAMDATY
+;
+	INC HL		;INC POINTER
+	INC HL
+;
+	LD A,8		;GET RECORDS PER ALLOC. BLOCK
+	BIT 2,(HL)
+	JR Z,K1		;JMP IF 1K BLOCKS
+;
+	LD A,16		;2K VALUE
+;
+K1:	LD (UNAMAX+RAMDATY),A	;SAVE IN RAMDATY
+;
+	POP HL		;RESTORE DPB POINTER
+	RET
+;
+SKPSET:	OR 0FFH		;CLEAR Z FLAG
+	JR SKPST1
+;
+BDRV:	LD HL,4		;RETURN ERROR CODE AND
+	LD (HL),H	;SET TO DRIVE A.
+	LD L,H
+	RET
+;
+;
+SETTRK:	LD A,C		;SET TRACK IN RAMDATY
+	LD (SEKTRK+RAMDATY),A
+	RET
+;
+;
+SETSEC:	LD A,C		;SET SECTOR IN RAMDATY
+	LD (SEKSEC+RAMDATY),A
+	RET
+;
+;
+SETDMA:	LD (DMAADR+RAMDATY),BC	;SET DMA ADDRESS IN RAMDATY
+	RET
+;
+;
+READ:	CALL MSTK	;FIX THE STACK
+;
+	PUSH IX		;SAVE IX & IY
+	PUSH IY
+;
+	LD IX,RAMDATX	;INIT IX & IY
+	LD IY,RAMDATY
+;
+	OUT (ROMCTL),A	; TURN ON ROM
+	CALL RDLSEC	; READ A LOGICAL SECTOR
+	JR RWMOVE	; MOVE DATA
+;
+WRITE:	CALL MSTK	;FIX THE STACK
+;
+	PUSH IX		;SAVE IX & IY
+	PUSH IY
+;
+	LD IX,RAMDATX	;INIT IX & IY
+	LD IY,RAMDATY
+;
+	OUT (ROMCTL),A	; TURN ON ROM
+	CALL WRTLSEC	; WRITE A LOGICAL SECTOR
+;
+;
+RWMOVE:	OR A		; SET FLAGS ON ACC
+	IN A,(ROMCTL)	; TURN OFF ROM
+	JR NZ,DIRET	; JUMP IF ERROR DURING READ OR WRITE
+	LDIR		;MOVE SECTOR
+;
+	LD A,(IY+WRTYPE)	;CHECK IF DIR WRITE
+	CP WRDIR
+	LD A,0		;A=NO ERROR STATUS IN CASE WE'RE DONE
+	JR NZ,DIRET	;JMP IF NOT DIR WRITE
+;
+	RES HSTWRT,(IY+DFLAG)	;CLEAR WRITE FLAG
+;
+	CALL WRTHST	;WRITE BUFFER
+;
+DIRET:	POP IY		;RESTORE IX & IY
+	POP IX
+;
+	POP HL		;RESTORE STACK
+	LD SP,HL
+;
+	CP BDFM		;SEE IF UNREADABLE
+	JP Z,BDRV	;JMP IF UNREADABLE
+;
+	CP NRDY		;SEE IF NOT READY
+	JP Z,BDRV	;JMP IF NOT READY
+;
+	RET
+;
+GETAB:	CALL MSTK	;FIX STACK
+	PUSH IX
+	PUSH IY
+	PUSH BC
+	LD IX,RAMDATX
+	LD IY,RAMDATY
+;
+	XOR A
+	BIT HSTWRT,(IY+DFLAG)
+	CALL NZ,WRTHST
+	RES HSTWRT,(IY+DFLAG)
+	RES HSTACT,(IY+DFLAG)
+	POP BC
+	OR A		;SEE IF ERROR
+	JR NZ,DIRET
+;
+	LD (IX+HSTDSK),C	;SET RAMDATX TO READ BOOT SECTOR
+	LD (IX+HSTTRK),0
+	LD (IX+HSTSEC),1
+	OUT (ROMCTL),A		;TURN ON ROM
+	CALL HMRM		;HOME DRIVE
+;
+	CALL RDHST		;READ BOOT SECTOR
+	JR DIRET
+;
+SECTRAN:LD L,C		;HL=BC
+	LD H,B
+;
+	INC HL		;START SECTORS AT 1
+;
+	LD A,D		;SEE IF XLAT TABLE
+	OR E
+	RET Z		;RETURN IF NO XLAT
+;
+	EX DE,HL	;HL=XLT
+;
+	ADD HL,BC	;ADD TO TABLE
+	LD L,(HL)	;GET XLATED SECTOR
+	LD H,0
+;
+	RET
+;
+;
+WRTHST:	OUT (ROMCTL),A	;TURN THE ROM ON
+;
+	CALL WRHSRM	;CALL THE ROM
+;
+HSTRET:	IN A,(ROMCTL)	;TURN OFF THE ROM
+;
+	LD A,(IX+ERFLAG)	;GET STATUS
+;
+	RET
+;
+RDHST:	OUT (ROMCTL),A	;TURN ON ROM
+;
+	CALL RDHSRM	;CALL ROM
+;
+	JR HSTRET	;RETURN
+;
+;
+RDBLK:	LD (IX+ERFLAG),0	;CLEAR ERROR FLAG
+;
+	LD IY,RAMDATY	;INIT IY
+;
+	CALL MSTK	;FIX THE STACK
+;
+	CALL RDHST	;CALL ROM
+;
+DRET:	POP HL		;RESTORE THE STACK
+	LD SP,HL
+;
+	RET
+;
+WRBLK:	LD (IX+ERFLAG),0	;CLEAR ERROR FLAG
+;
+	LD IY,RAMDATY	;INIT IY
+;
+	CALL MSTK	;FIX STACK
+;
+	CALL WRTHST	;CALL ROM
+;
+	JR DRET
+;
+DISCIO:	LD (IX+ERFLAG),0	;CLEAR ERROR FLAG
+;
+	LD IY,RAMDATY
+;
+	CALL MSTK	;FIX THE STACK
+;
+	OUT (ROMCTL),A	;TURN ON THE ROM
+;
+	CALL DISRM	;CALL THE ROM
+;
+	IN A,(ROMCTL)	;TURN OFF ROM
+;
+	LD A,(IX+ERFLAG)
+;
+	JR DRET		;RETURN
+;
+;
+GDSK1:	LD DE,MTOFF	;CALC. MTAB POINTER
+	ADD HL,DE
+;
+	LD E,A		;MULTIPLY DRIVE BY 9
+	RLCA
+	RLCA
+	RLCA
+	ADD A,E
+;
+	LD E,A		;ADD (9 * DRIVE) TO POINTER
+	ADD HL,DE
+;
+	RET
+; 
+;	CVMSG IS A ROUTINE TO CHANGE THE VIRTUAL DRIVE MESSAGE.
+;	ON ENTRY:	HL POINTS TO THE BEGINING OF THE NEW MESSAGE.
+;			DE POINTS TO THE LOCATION OF THE CHARACTER
+;			   WHICH WILL BE SET TO THE LOGICAL DRIVE
+;			   THAT THE VIRTUAL DRIVE IS TO BECOME.
+;			BC IS THE LENGTH OF THE NEW MESSAGE.
+;
+;	AF,BC,DE,HL ARE CHANGED, ALL OTHER REGS. ARE UNCHANGED.
+;
+CVMSG:	PUSH HL
+	EX DE,HL
+	XOR A
+	SBC HL,DE
+	LD DE,VMSG
+	ADD HL,DE
+	LD (VDRVP+RAMDATY),HL
+;
+	POP HL
+	LDIR
+	RET
+;
+DPBASE	EQU $
+DPE0:	DW XLT1K
+	DW 0
+	DW 0
+	DW 0
+	DW DIRBUF
+	DW DPB0
+	DW CSV0
+	DW ALV0
+;
+DPE1:	DW XLT1K
+	DW 0
+	DW 0
+	DW 0
+	DW DIRBUF
+	DW DPB1
+	DW CSV1
+	DW ALV1
+;
+DPE2:	DW XLT1K
+	DW 0
+	DW 0
+	DW 0
+	DW DIRBUF
+	DW DPB2
+	DW CSV2
+	DW ALV2
+;
+DPE3:	DW XLT1K
+	DW 0
+	DW 0
+	DW 0
+	DW DIRBUF
+	DW DPB3
+	DW CSV3
+	DW ALV3
+;
+DPE4:	DW XLT1K
+	DW 0
+	DW 0
+	DW 0
+	DW DIRBUF
+	DW DPB4
+	DW CSV4
+	DW ALV4
+;
+SDPB:	DW 40
+	DB 4
+	DB 15
+	DB 1
+	DW 94
+	DW 127
+	DB 0C0H
+	DB 0
+	DW 32
+	DW 2
+;
+DPB0:	DW 40
+	DB 4
+	DB 15
+	DB 1
+	DW 194
+	DW 191
+	DB 0E0H
+	DB 0
+	DW 48
+	DW 2
+;
+DPB1:	DW 40
+	DB 4
+	DB 15
+	DB 1
+	DW 194
+	DW 191
+	DB 0E0H
+	DB 0
+	DW 48
+	DW 2
+;
+DPB2:	DW 40
+	DB 4
+	DB 15
+	DB 1
+	DW 194
+	DW 191
+	DB 0E0H
+	DB 0
+	DW 48
+	DW 2
+;
+DPB3:	DW 40
+	DB 4
+	DB 15
+	DB 1
+	DW 194
+	DW 191
+	DB 0E0H
+	DB 0
+	DW 48
+	DW 2
+;
+DPB4:	DW 40
+	DB 4
+	DB 15
+	DB 1
+	DW 194
+	DW 191
+	DB 0E0H
+	DB 0
+	DW 48
+	DW 2
+;
+;
+RAMDATX:
+HSTDSK	EQU $-RAMDATX
+	DB 0
+HSTTRK	EQU $-RAMDATX
+	DB 0
+HSTSEC	EQU $-RAMDATX
+	DB 0
+SECCNT	EQU $-RAMDATX
+	DB 1
+RETRY	EQU $-RAMDATX
+	DB 20
+HSTBUF	EQU $-RAMDATX
+	DW DSKBUF
+ERFLAG	EQU $-RAMDATX
+	DB 0
+PHYTRK	EQU $-RAMDATX
+	DB 0
+PHYHD	EQU $-RAMDATX
+	DB 0
+IOADD	EQU $-RAMDATX
+	DW 0
+SECSIZ	EQU $-RAMDATX
+	DW 0
+STADD	EQU $-RAMDATX
+	DW 0
+	DW 0
+	DW 0
+	DB 0
+CMDCNT	EQU $-RAMDATX
+	DB 9
+CMDBUF	EQU $-RAMDATX
+	DW 0
+	DW 0
+	DW 0
+	DW 0
+	DB 0
+;
+DATXLN	EQU $-RAMDATX
+;
+SER1BAUD:
+	DB DFLT1	;index in Baud rate table for SER1 default baud rate
+SER2BAUD:
+	DB DFLT2	;index in Baud rate table for SER2 default baud rate
+	DS 2,0ffh	;reserved for future expansion
+;
+VNUMB:	DB 3	; # OF PHYSICAL DRIVES - 1
+TLEV:	DB 0	; TERMINAL LEVEL
+;
+;
+RAMDATY:
+SEKDSK	EQU $-RAMDATY
+	DS 1
+SEKTRK	EQU $-RAMDATY
+	DS 1
+SEKSEC	EQU $-RAMDATY
+	DS 1
+;
+SEKHST	EQU $-RAMDATY
+	DS 1
+;
+UNACNT	EQU $-RAMDATY
+	DS 1
+UNADSK	EQU $-RAMDATY
+	DS 1
+UNATRK	EQU $-RAMDATY
+	DS 1
+UNASEC	EQU $-RAMDATY
+	DS 1
+UNAMAX	EQU $-RAMDATY
+	DS 1
+SECTRK	EQU $-RAMDATY
+	DS 1
+;
+WRTYPE	EQU $-RAMDATY
+	DS 1
+DFLAG	EQU $-RAMDATY
+	DB 10H
+TRSEC	EQU $-RAMDATY
+	DS 1
+;
+VMSGP	EQU $-RAMDATY
+	DW VMSG
+VDRVP	EQU $-RAMDATY
+	DW VDRV
+;
+CDSK	EQU $-RAMDATY
+	DB 0FFH
+PDSK	EQU $-RAMDATY
+	DB 0
+VDSK	EQU $-RAMDATY
+	DB 0
+;
+DMAADR	EQU $-RAMDATY
+	DS 2
+OUTP	EQU $-RAMDATY
+	DW CNOUT
+INP	EQU $-RAMDATY
+	DW CNIN
+;
+;	MTAB contains one 9 byte entry for each logical drive.
+;	The bytes of each entry are defined as follows:
+;
+;	Byte 0		DSKDEF0:
+;			Bit 0-2	Motor control bit
+;			Bit 3-4	Double sided mode:
+;					00=Even tracks on side 0,
+;					   Odd tracks on side 1.
+;					01=1st 40 (or 80) tracks
+;					   on side 0, remaining
+;					   tracks on side 1.
+;					10=Both sides are treated
+;					   as a single track with
+;					   twice as many sectors.
+;			Bit 5 Double sided drive if = 1.
+;			Bit 6 Unused.
+;			Bit 7 Foreign drive format if = 1.
+;
+;	Byte 1		DSKDEF1:
+;			Bit 0-1 Physical drive address.
+;			Bit 2   Double sided media if = 1.
+;			Bit 3-4 Sector size:
+;					00=128
+;					01=256
+;					10=512
+;					11=1024.
+;			Bit 5   Tracks: 0=40; 1=80.
+;			Bit 6	Density: 0=single; 1=double.
+;			Bit 7	Virtual drive: 1=virtual.
+;
+;	Byte 2		Motor on wait time in increments of 4 ms.
+;
+;	Byte 3		Head settle time (after seek) in increments
+;			of 4 ms.
+;
+;	Byte 4-5	The two parameter bytes for the FDC specify
+;			command: Byte 4	= SRT/HUT
+;				 Byte 5 = HLT/ND
+;				 ND must be 1.
+;
+;	Byte 6		EOT byte for FDC read or write commands.
+;
+;	Byte 7		GPL byte for FDC read or write commands.
+;
+;	Byte 8		Current track.
+;
+MTAB:
+MTOFF	EQU $-RAMDATY
+	DB 21H
+	DB 0DCH
+	DB 125
+	DB 4
+	DB 0BFH
+	DB 3
+	DB 5
+	DB 28
+	DB 0FFH
+;
+	DB 22H
+	DB 5DH
+	DB 125
+	DB 4
+	DB 0BFH
+	DB 3
+	DB 5
+	DB 28
+	DB 0FFH
+;
+	DB 24H
+	DB 5EH
+	DB 125
+	DB 4
+	DB 0BFH
+	DB 3
+	DB 5
+	DB 28
+	DB 0FFH
+;
+	DB 24H
+	DB 5FH
+	DB 125
+	DB 4
+	DB 0BFH
+	DB 3
+	DB 5
+	DB 28
+	DB 0FFH
+;
+	DB 21H
+	DB 0DCH
+	DB 125
+	DB 4
+	DB 0BFH
+	DB 3
+	DB 5
+	DB 28
+	DB 0FFH
+;
+DIRBUF:	DS 128
+;
+ALV0:	DS 25
+CSV0:	DS 48
+ALV1:	DS 25
+CSV1:	DS 48
+ALV2:	DS 25
+CSV2:	DS 48
+ALV3:	DS 25
+CSV3:	DS 48
+ALV4:	DS 25
+CSV4:	DS 48
+;
+VMSGº	ÄB cr,lf,'Your lower drive is being re-assigned as drive '
+VDRV:	DB 'A.',cr,lf,'Exchange diskettes and press [RETURN]',0
+;
+LSTFLG:	DB	0FFH		; PRINTER READY FLAG
+;
+;
+dcastrtº	äb	1bh,3dh,0ffh	» dcá prefiø stringŠ		ds	3,0ffh
+;
+dcamid:		ds	6,0ffh		; dca seperator
+;
+dcaend:		ds	6,0ffh		; dca terminator string
+;
+esc_lvlº	äb	0		;indicateó esã sequencå level
+offset1:	db	0		;first character offset 
+offset2:	db	0		;second character offset
+order:		db	1		;Bit 0 = 0 --> row, then column,
+					;      = 1 --> column, then row
+					;Bit 1 = 0 --> binary cursor adresses
+					;        1 --> ascii cursor addresses
+first:		db	0		; temporary storage of  first 
+second:		db	0		; temporary storage of second
+;
+XLTAB:	DB 0
+	DW 40
+XLT1K:	DB 1,2,3,4,5,6,7,8
+	DB 25,26,27,28,29,30,31,32
+	DB 9,10,11,12,13,14,15,16
+	DB 33,34,35,36,37,38,39,40
+	DB 17,18,19,20,21,22,23,24
+;
+	DB	0FEH		; CONSOLE XLT TABLE
+	DW	CLEN
+esctbl:	DB	0FFH
+ctrltbl:DB	0FFH
+escvect:DW	0
+ctvect:	DW	0
+;
+;	TRANSLATION STRINGS FOR THE TERMINAL GO HERE
+;
+CLEN	EQU	$-ESCTBL
+;
+	DB 0FFH			;EOT
+	DW BIOS+0A00H-$-57	;SPACE FOR MORE XLT'S
+	DS (BIOS+0A00H-$-55),0
+;
+	DB 0FDH			;IMS BUFFER HEADER
+	DW 0
+;
+	DS 52,0			;STACK SPACE
+;
+DSKBUF	EQU $
+STACK	EQU $
+;
+SIGNON:	DB 0DH,0AH,'Micro-Decision -- 64K CP/M Vers. 2.2 -- Rev. '
+	DB ((REV AND 0F0H) SHR 4)+ASC0,'.',(REV AND 0FH)+ASC0
+	DB CR,LF
+	DB "Copyright '76,'77,'78,'79,'80 Digital Research, Inc."
+	DB CR,LF
+	DB 'Copyright 1982,1983 Morrow Designs, Inc.'
+	DB CR,LF,LF
+	DB '************** Double Sided System **************'
+	DB CR,LF,0
+;
+;
+BOOT:	LD SP,STACK
+	LD IY,RAMDATY
+	CALL INITCTC	;initialize baud rates
+	LD DE,SIGNON
+	OUT (ROMCTL),A	;TURN ON ROM
+	CALL MSGRM
+	IN A,(ROMCTL)	;TURN OFF ROM
+;
+	XOR A
+	LD (3),A
+	LD (4),A
+;
+	LD HL,CPM
+;
+	JP GOCPM
+;
+	END
+
